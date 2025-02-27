@@ -1,5 +1,4 @@
 use chrono::Utc;
-use super::json_structs;
 use tokio::{
     net::TcpStream,
     io::AsyncWriteExt,
@@ -11,46 +10,13 @@ use std::{
 use serde_json::Value;
 use std::time::Duration;
 
-pub fn check_ts_validity(ts: &str) -> bool {
-    let ts = ts.parse::<u64>().unwrap_or(0) / 1000;
+pub fn check_ts_validity(ts: u64) -> bool {
+    let ts = ts / 1000;
     let now = Utc::now().timestamp() as u64;
     let diff = now.saturating_sub(ts);
     diff <= 10 || (ts > now && (ts - now) <= 2)
 }
 
-pub async fn broadcast_conn(input: &json_structs::Input) {
-    let nodes = match read_nodes_from_json("nodes.json") {
-        Ok(n) => n,
-        Err(e) => {
-            eprintln!("Failed to read nodes.json: {}", e);
-            return;
-        }
-    };
-    println!("Broadcasting to nodes: {:?}", nodes);
-    let message = serde_json::to_string(&input).unwrap();
-    let message_with_newline = format!("{}\n", message);
-    let input_ip = input.data.ip.clone();
-
-    let mut tasks = Vec::new();
-
-    for node_ip in nodes {
-        if node_ip == input_ip {
-            continue; // Skip self
-        }
-
-        let msg = message_with_newline.clone();
-        tasks.push(tokio::spawn(async move {
-            match send_tcp_message(&node_ip, &msg).await {
-                Ok(_) => println!("Successfully broadcasted to {}", node_ip),
-                Err(e) => eprintln!("Failed to send to {}: {}", node_ip, e),
-            }
-        }));
-    }
-
-    for task in tasks {
-        let _ = task.await;
-    }
-}
 
 pub fn read_nodes_from_json(file_path: &str) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
     let content = fs::read_to_string(file_path)?;
@@ -79,4 +45,22 @@ pub async fn send_tcp_message(ip: &str, message: &str) -> Result<(), Box<dyn Err
         tokio::time::sleep(Duration::from_millis(500 * attempt as u64)).await;
     }
     Err(format!("Failed to send message to {} after 3 attempts", ip).into())
+}
+
+pub fn uint8_array_to_ts(arr: &[u8]) -> u64 {
+    if arr.len() != 8 {
+        panic!("Input array must be exactly 8 bytes long");
+    }
+
+    let high = u32::from(arr[0]) << 24
+        | u32::from(arr[1]) << 16
+        | u32::from(arr[2]) << 8
+        | u32::from(arr[3]);
+
+    let low = u32::from(arr[4]) << 24
+        | u32::from(arr[5]) << 16
+        | u32::from(arr[6]) << 8
+        | u32::from(arr[7]);
+
+    ((high as u64) << 32) | low as u64
 }
